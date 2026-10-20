@@ -20,5 +20,6 @@ A production-style REST API built with Rust, Axum, SQLx, and PostgreSQL.
 - [ ] Add middleware and integration tests
 
 # dependencies dobby!
-Axum — defines routes and handles HTTP requests.
-Tokio — runs our asynchronous server.
+- Axum — defines routes and handles HTTP requests.
+- Tokio — runs our asynchronous server.
+- Serde is a Rust library for serializing and deserializing data. We'll use it to convert a Rust struct into JSON.

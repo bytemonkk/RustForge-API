@@ -1,8 +1,18 @@
-use axum::{Router, routing::get};
+use axum::{Json, Router, routing::get};
+use serde::Serialize;
 use tokio::net::TcpListener;
 
-async fn health() -> &'static str {
-    "hello from RustForge API backend!"
+#[derive(Serialize)]
+struct HealthResponse {
+    status: &'static str,
+    service: &'static str,
+}
+
+async fn health() -> Json<HealthResponse> {
+    Json(HealthResponse {
+        status: "ok",
+        service: "RustForge API",
+    })
 }
 
 #[tokio::main]
