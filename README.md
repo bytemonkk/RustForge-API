@@ -14,7 +14,10 @@ A production-style REST API built with Rust, Axum, SQLx, and PostgreSQL.
 
 - [x] Initialize Rust project
 - [x] Verify compilation and test harness
-- [ ] Build the first HTTP endpoint
+- [x] Build the first HTTP endpoint
+- [x] Return JSON health responses
+- [x] Implement in-memory task creation and retrieval
+- [x] Handle missing tasks with HTTP 404
 - [ ] Integrate PostgreSQL with Docker
 - [ ] Implement CRUD and authentication
 - [ ] Add middleware and integration tests
