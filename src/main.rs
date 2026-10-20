@@ -5,12 +5,12 @@ use axum::{
     routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
-use tokio::{net::TcpListener, sync::Mutex};
+use sqlx::{FromRow, PgPool, postgres::PgPoolOptions};
+use tokio::net::TcpListener;
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, FromRow)]
 struct Task {
-    id: u64,
+    id: i64,
     title: String,
 }
 
@@ -24,13 +24,10 @@ struct ErrorResponse {
     error: String,
 }
 
-type SharedTasks = Arc<Mutex<Vec<Task>>>;
-
 async fn create_task(
-    State(tasks): State<SharedTasks>,
+    State(pool): State<PgPool>,
     payload: Result<Json<CreateTask>, JsonRejection>,
 ) -> Result<(StatusCode, Json<Task>), (StatusCode, Json<ErrorResponse>)> {
-    // Convert JSON parsing errors into our own JSON error response.
     let Json(payload) = payload.map_err(|err| {
         (
             StatusCode::BAD_REQUEST,
@@ -40,7 +37,6 @@ async fn create_task(
         )
     })?;
 
-    // Reject empty titles and titles containing only whitespace.
     let title = payload.title.trim();
 
     if title.is_empty() {
@@ -52,34 +48,48 @@ async fn create_task(
         ));
     }
 
-    let mut tasks = tasks.lock().await;
-
-    let id = tasks.last().map_or(1, |task| task.id + 1);
-
-    let task = Task {
-        id,
-        title: title.to_string(),
-    };
-
-    tasks.push(task.clone());
+    let task =
+        sqlx::query_as::<_, Task>("INSERT INTO tasks (title) VALUES ($1) RETURNING id, title")
+            .bind(title)
+            .fetch_one(&pool)
+            .await
+            .map_err(|_| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: "Failed to create task".to_string(),
+                    }),
+                )
+            })?;
 
     Ok((StatusCode::CREATED, Json(task)))
 }
 
 async fn get_task(
-    Path(id): Path<u64>,
-    State(tasks): State<SharedTasks>,
-) -> Result<Json<Task>, StatusCode> {
-    let task = tasks
-        .lock()
+    Path(id): Path<i64>,
+    State(pool): State<PgPool>,
+) -> Result<Json<Task>, (StatusCode, Json<ErrorResponse>)> {
+    let task = sqlx::query_as::<_, Task>("SELECT id, title FROM tasks WHERE id = $1")
+        .bind(id)
+        .fetch_optional(&pool)
         .await
-        .iter()
-        .find(|task| task.id == id)
-        .cloned();
+        .map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Failed to retrieve task".to_string(),
+                }),
+            )
+        })?;
 
     match task {
         Some(task) => Ok(Json(task)),
-        None => Err(StatusCode::NOT_FOUND),
+        None => Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "Task not found".to_string(),
+            }),
+        )),
     }
 }
 
@@ -90,15 +100,32 @@ async fn health() -> Json<serde_json::Value> {
     }))
 }
 
-#[tokio::main]
-async fn main() {
-    let tasks: SharedTasks = Arc::new(Mutex::new(Vec::new()));
-
-    let app = Router::new()
+fn build_app(pool: PgPool) -> Router {
+    Router::new()
         .route("/health", get(health))
         .route("/tasks", post(create_task))
         .route("/tasks/{id}", get(get_task))
-        .with_state(tasks);
+        .with_state(pool)
+}
+
+#[tokio::main]
+async fn main() {
+    dotenvy::dotenv().expect("Failed to load .env file");
+
+    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+
+    let pool = PgPoolOptions::new()
+        .max_connections(5)
+        .connect(&database_url)
+        .await
+        .expect("Failed to connect to PostgreSQL");
+
+    sqlx::migrate!("./migrations")
+        .run(&pool)
+        .await
+        .expect("Failed to run database migrations");
+
+    let app = build_app(pool);
 
     let listener = TcpListener::bind("127.0.0.1:3000")
         .await
@@ -107,4 +134,163 @@ async fn main() {
     println!("RustForge API is up and running at http://127.0.0.1:3000");
 
     axum::serve(listener, app).await.expect("Server failed");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{
+        body::{Body, to_bytes},
+        http::Request,
+    };
+    use tower::ServiceExt;
+
+    async fn test_app() -> Router {
+        dotenvy::dotenv().expect("Failed to load .env file");
+
+        let database_url =
+            std::env::var("TEST_DATABASE_URL").expect("TEST_DATABASE_URL must be set");
+
+        let pool = PgPoolOptions::new()
+            .max_connections(2)
+            .connect(&database_url)
+            .await
+            .expect("Failed to connect to test database");
+
+        sqlx::migrate!("./migrations")
+            .run(&pool)
+            .await
+            .expect("Failed to run test database migrations");
+
+        build_app(pool)
+    }
+
+    async fn response_json(response: axum::response::Response) -> serde_json::Value {
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("Failed to read response body");
+
+        serde_json::from_slice(&body).expect("Response was not valid JSON")
+    }
+
+    #[tokio::test]
+    async fn health_returns_ok() {
+        let app = test_app().await;
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = response_json(response).await;
+        assert_eq!(body["status"], "ok");
+    }
+
+    #[tokio::test]
+    async fn create_task_returns_created() {
+        let app = test_app().await;
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/tasks")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"title":"Automated test task"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::CREATED);
+
+        let body = response_json(response).await;
+        assert_eq!(body["title"], "Automated test task");
+        assert!(body["id"].as_i64().is_some());
+    }
+
+    #[tokio::test]
+    async fn get_existing_task_returns_ok() {
+        let app = test_app().await;
+
+        let create_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/tasks")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"title":"Task to retrieve"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(create_response.status(), StatusCode::CREATED);
+
+        let created = response_json(create_response).await;
+        let id = created["id"].as_i64().unwrap();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/tasks/{id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = response_json(response).await;
+        assert_eq!(body["id"], id);
+        assert_eq!(body["title"], "Task to retrieve");
+    }
+
+    #[tokio::test]
+    async fn missing_task_returns_not_found() {
+        let app = test_app().await;
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/tasks/-999999999")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn empty_title_returns_bad_request() {
+        let app = test_app().await;
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/tasks")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"title":"   "}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        let body = response_json(response).await;
+        assert_eq!(body["error"], "Task title cannot be empty");
+    }
 }

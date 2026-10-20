@@ -30,3 +30,5 @@ A production-style REST API built with Rust, Axum, SQLx, and PostgreSQL.
 - Axum — defines routes and handles HTTP requests.
 - Tokio — runs our asynchronous server.
 - Serde is a Rust library for serializing and deserializing data. We'll use it to convert a Rust struct into JSON.
+- What is tower?
+Axum builds on Tower's service abstractions. The util feature gives us ServiceExt, which lets a test send a request directly to the router and inspect the response.
