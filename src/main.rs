@@ -19,24 +19,40 @@ struct CreateTask {
     title: String,
 }
 
+#[derive(Serialize)]
+struct ErrorResponse {
+    error: String,
+}
+
 type SharedTasks = Arc<Mutex<Vec<Task>>>;
 
 async fn create_task(
     State(tasks): State<SharedTasks>,
     Json(payload): Json<CreateTask>,
-) -> (StatusCode, Json<Task>) {
+) -> Result<(StatusCode, Json<Task>), (StatusCode, Json<ErrorResponse>)> {
+    let title = payload.title.trim();
+
+    if title.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Task title cannot be empty".to_string(),
+            }),
+        ));
+    }
+
     let mut tasks = tasks.lock().await;
 
     let id = tasks.last().map_or(1, |task| task.id + 1);
 
     let task = Task {
         id,
-        title: payload.title,
+        title: title.to_string(),
     };
 
     tasks.push(task.clone());
 
-    (StatusCode::CREATED, Json(task))
+    Ok((StatusCode::CREATED, Json(task)))
 }
 
 async fn get_task(
