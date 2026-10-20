@@ -18,3 +18,7 @@ A production-style REST API built with Rust, Axum, SQLx, and PostgreSQL.
 - [ ] Integrate PostgreSQL with Docker
 - [ ] Implement CRUD and authentication
 - [ ] Add middleware and integration tests
+
+# dependencies dobby!
+Axum — defines routes and handles HTTP requests.
+Tokio — runs our asynchronous server.
