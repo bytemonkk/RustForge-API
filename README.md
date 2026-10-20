@@ -1,0 +1,20 @@
+# RustForge API
+
+A production-style REST API built with Rust, Axum, SQLx, and PostgreSQL.
+
+## Learning Goals
+
+- Learn Rust through practical backend development.
+- Build REST endpoints using Axum.
+- Integrate PostgreSQL using SQLx.
+- Implement authentication and CRUD operations.
+- Write unit and integration tests.
+
+## Progress
+
+- [x] Initialize Rust project
+- [x] Verify compilation and test harness
+- [ ] Build the first HTTP endpoint
+- [ ] Integrate PostgreSQL with Docker
+- [ ] Implement CRUD and authentication
+- [ ] Add middleware and integration tests
