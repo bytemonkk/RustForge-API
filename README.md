@@ -18,6 +18,10 @@ A production-style REST API built with Rust, Axum, SQLx, and PostgreSQL.
 - [x] Return JSON health responses
 - [x] Implement in-memory task creation and retrieval
 - [x] Handle missing tasks with HTTP 404
+- [x] Implement in-memory task creation and retrieval
+- [x] Validate task titles
+- [x] Return JSON errors for malformed requests
+- [x] Handle missing required fields
 - [ ] Integrate PostgreSQL with Docker
 - [ ] Implement CRUD and authentication
 - [ ] Add middleware and integration tests

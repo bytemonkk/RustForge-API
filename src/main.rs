@@ -1,6 +1,6 @@
 use axum::{
     Json, Router,
-    extract::{Path, State},
+    extract::{Path, State, rejection::JsonRejection},
     http::StatusCode,
     routing::{get, post},
 };
@@ -28,8 +28,19 @@ type SharedTasks = Arc<Mutex<Vec<Task>>>;
 
 async fn create_task(
     State(tasks): State<SharedTasks>,
-    Json(payload): Json<CreateTask>,
+    payload: Result<Json<CreateTask>, JsonRejection>,
 ) -> Result<(StatusCode, Json<Task>), (StatusCode, Json<ErrorResponse>)> {
+    // Convert JSON parsing errors into our own JSON error response.
+    let Json(payload) = payload.map_err(|err| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: err.body_text(),
+            }),
+        )
+    })?;
+
+    // Reject empty titles and titles containing only whitespace.
     let title = payload.title.trim();
 
     if title.is_empty() {
